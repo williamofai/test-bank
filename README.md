@@ -1,4 +1,6 @@
-# Grok Bank - A Test Architect’s Demo
+# Test Bank - A Test Architect’s Demo
+...
+Clone repo from `https://github.com/williamofai/test-bank`.
 
 A complex banking app built to showcase system design, testability, and practical skills. Deployed on a Digital Ocean droplet (`144.126.239.47:5000`), this project features a REST API, stubbed external services, and a polished UI.
 

@@ -36,4 +36,4 @@ Try it at `http://144.126.239.47:5000`!
 Run `./load_test.sh`—hits `/api/balance/1234` 500 times sequentially. With a 100ms delay per request, it completes in ~55s, proving consistent latency handling.
 
 ## Data Generation
-Run `python3 generate_accounts.py` to add 10 random accounts with personal details (names, DOB, addresses).
+Run `python3 generate_accounts.py` to add 50 random accounts with personal details (names, DOB, addresses, balances £100-£5000). Current total: 61 accounts.

@@ -29,7 +29,7 @@ BASE_STYLE = """
 def home():
     return f"""
         {BASE_STYLE}
-        <h1>Grok Bank</h1>
+        <h1>Test Bank</h1>
         <form action="/check" method="POST">
             Account Number: <input type="text" name="account" required>
             <input type="submit" value="Check Balance">
@@ -47,8 +47,8 @@ def check_balance():
     conn.close()
     if result:
         balance = "{:.2f}".format(result[0])
-        return f"{BASE_STYLE}<h1>Grok Bank</h1><p class='success'>Account {account}: £{balance} available</p><a href='/'>Back</a>"
-    return f"{BASE_STYLE}<h1>Grok Bank</h1><p class='error'>Account {account} not found</p><a href='/'>Back</a>"
+        return f"{BASE_STYLE}<h1>Test Bank</h1><p class='success'>Account {account}: £{balance} available</p><a href='/'>Back</a>"
+    return f"{BASE_STYLE}<h1>Test Bank</h1><p class='error'>Account {account} not found</p><a href='/'>Back</a>"
 
 @app.route('/deposit', methods=['GET', 'POST'])
 def deposit():
@@ -57,28 +57,28 @@ def deposit():
         try:
             amount = float(request.form['amount'])
             if amount <= 0:
-                return f"{BASE_STYLE}<h1>Grok Bank</h1><p class='error'>Amount must be positive</p><a href='/deposit'>Back</a>"
+                return f"{BASE_STYLE}<h1>Test Bank</h1><p class='error'>Amount must be positive</p><a href='/deposit'>Back</a>"
         except ValueError:
-            return f"{BASE_STYLE}<h1>Grok Bank</h1><p class='error'>Invalid amount</p><a href='/deposit'>Back</a>"
+            return f"{BASE_STYLE}<h1>Test Bank</h1><p class='error'>Invalid amount</p><a href='/deposit'>Back</a>"
         
         if not check_fraud(account, amount):
-            return f"{BASE_STYLE}<h1>Grok Bank</h1><p class='error'>Deposit of £{amount:.2f} to {account} rejected by fraud check</p><a href='/'>Back</a>"
+            return f"{BASE_STYLE}<h1>Test Bank</h1><p class='error'>Deposit of £{amount:.2f} to {account} rejected by fraud check</p><a href='/'>Back</a>"
         
         conn = sqlite3.connect('bank.db')
         cursor = conn.cursor()
         cursor.execute("UPDATE accounts SET balance = balance + ? WHERE account_number = ?", (amount, account))
         if cursor.rowcount == 0:
             conn.close()
-            return f"{BASE_STYLE}<h1>Grok Bank</h1><p class='error'>Account {account} not found</p><a href='/'>Back</a>"
+            return f"{BASE_STYLE}<h1>Test Bank</h1><p class='error'>Account {account} not found</p><a href='/'>Back</a>"
         cursor.execute("INSERT INTO transactions (account_number, amount, type) VALUES (?, ?, 'deposit')", (account, amount))
         conn.commit()
         cursor.execute("SELECT balance FROM accounts WHERE account_number = ?", (account,))
         result = cursor.fetchone()
         conn.close()
-        return f"{BASE_STYLE}<h1>Grok Bank</h1><p class='success'>Deposited £{amount:.2f} to {account}. New balance: £{result[0]:.2f}</p><a href='/'>Back</a>"
+        return f"{BASE_STYLE}<h1>Test Bank</h1><p class='success'>Deposited £{amount:.2f} to {account}. New balance: £{result[0]:.2f}</p><a href='/'>Back</a>"
     return f"""
         {BASE_STYLE}
-        <h1>Grok Bank - Deposit</h1>
+        <h1>Test Bank - Deposit</h1>
         <form action="/deposit" method="POST">
             Account Number: <input type="text" name="account" required><br>
             Amount: <input type="number" name="amount" step="0.01" min="0.01" required><br>
@@ -94,9 +94,9 @@ def withdraw():
         try:
             amount = float(request.form['amount'])
             if amount <= 0:
-                return f"{BASE_STYLE}<h1>Grok Bank</h1><p class='error'>Amount must be positive</p><a href='/withdraw'>Back</a>"
+                return f"{BASE_STYLE}<h1>Test Bank</h1><p class='error'>Amount must be positive</p><a href='/withdraw'>Back</a>"
         except ValueError:
-            return f"{BASE_STYLE}<h1>Grok Bank</h1><p class='error'>Invalid amount</p><a href='/withdraw'>Back</a>"
+            return f"{BASE_STYLE}<h1>Test Bank</h1><p class='error'>Invalid amount</p><a href='/withdraw'>Back</a>"
         conn = sqlite3.connect('bank.db')
         cursor = conn.cursor()
         cursor.execute("SELECT balance FROM accounts WHERE account_number = ?", (account,))
@@ -109,14 +109,14 @@ def withdraw():
                 cursor.execute("SELECT balance FROM accounts WHERE account_number = ?", (account,))
                 new_balance = cursor.fetchone()[0]
                 conn.close()
-                return f"{BASE_STYLE}<h1>Grok Bank</h1><p class='success'>Withdrew £{amount:.2f} from {account}. New balance: £{new_balance:.2f}</p><a href='/'>Back</a>"
+                return f"{BASE_STYLE}<h1>Test Bank</h1><p class='success'>Withdrew £{amount:.2f} from {account}. New balance: £{new_balance:.2f}</p><a href='/'>Back</a>"
             conn.close()
-            return f"{BASE_STYLE}<h1>Grok Bank</h1><p class='error'>Insufficient funds in {account}</p><a href='/'>Back</a>"
+            return f"{BASE_STYLE}<h1>Test Bank</h1><p class='error'>Insufficient funds in {account}</p><a href='/'>Back</a>"
         conn.close()
-        return f"{BASE_STYLE}<h1>Grok Bank</h1><p class='error'>Account {account} not found</p><a href='/'>Back</a>"
+        return f"{BASE_STYLE}<h1>Test Bank</h1><p class='error'>Account {account} not found</p><a href='/'>Back</a>"
     return f"""
         {BASE_STYLE}
-        <h1>Grok Bank - Withdraw</h1>
+        <h1>Test Bank - Withdraw</h1>
         <form action="/withdraw" method="POST">
             Account Number: <input type="text" name="account" required><br>
             Amount: <input type="number" name="amount" step="0.01" min="0.01" required><br>
@@ -139,11 +139,11 @@ def history():
             for t in transactions:
                 table += f"<tr><td>£{t[0]:.2f}</td><td>{t[1]}</td><td>{t[2]}</td></tr>"
             table += "</table>"
-            return f"{BASE_STYLE}<h1>Grok Bank - History</h1><p>Account {account}</p>{table}<a href='/'>Back</a>"
-        return f"{BASE_STYLE}<h1>Grok Bank</h1><p class='error'>No transactions for {account}</p><a href='/'>Back</a>"
+            return f"{BASE_STYLE}<h1>Test Bank - History</h1><p>Account {account}</p>{table}<a href='/'>Back</a>"
+        return f"{BASE_STYLE}<h1>Test Bank</h1><p class='error'>No transactions for {account}</p><a href='/'>Back</a>"
     return f"""
         {BASE_STYLE}
-        <h1>Grok Bank - Transaction History</h1>
+        <h1>Test Bank - Transaction History</h1>
         <form action="/history" method="POST">
             Account Number: <input type="text" name="account" required><br>
             <input type="submit" value="View History">
@@ -153,6 +153,7 @@ def history():
 
 @app.route('/api/balance/<account>', methods=['GET'])
 def api_balance(account):
+    time.sleep(0.1)  # 100ms delay added here
     conn = sqlite3.connect('bank.db')
     cursor = conn.cursor()
     cursor.execute("SELECT balance FROM accounts WHERE account_number = ?", (account,))
@@ -184,11 +185,11 @@ def login():
         result = cursor.fetchone()
         conn.close()
         if result:
-            return f"{BASE_STYLE}<h1>Grok Bank</h1><p class='success'>Welcome, {username}!</p><a href='/'>Back</a>"
-        return f"{BASE_STYLE}<h1>Grok Bank</h1><p class='error'>Invalid username or password</p><a href='/login'>Try again</a>"
+            return f"{BASE_STYLE}<h1>Test Bank</h1><p class='success'>Welcome, {username}!</p><a href='/'>Back</a>"
+        return f"{BASE_STYLE}<h1>Test Bank</h1><p class='error'>Invalid username or password</p><a href='/login'>Try again</a>"
     return f"""
         {BASE_STYLE}
-        <h1>Grok Bank - Login</h1>
+        <h1>Test Bank - Login</h1>
         <form action="/login" method="POST">
             Username: <input type="text" name="username" required><br>
             Password: <input type="text" name="password" required><br>

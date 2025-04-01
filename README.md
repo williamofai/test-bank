@@ -40,3 +40,6 @@ Run `python3 generate_accounts.py` to add 1000 random accounts with personal det
 
 ## Performance Testing
 Run `python3 load_test_open_account.py` to simulate account openings for 60 seconds. Latest result: Created 14,459 accounts in 60.00 seconds (240.98 accounts/sec). Total accounts: 29,988.
+
+## Architecture
+![Test Bank Architecture](test-bank-architecture.png)

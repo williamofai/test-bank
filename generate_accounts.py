@@ -12,7 +12,7 @@ streets = ['High Street', 'Main Road', 'Park Lane', 'Church Street']
 conn = sqlite3.connect('bank.db')
 cursor = conn.cursor()
 
-for i in range(10):  # 10 random accounts
+for i in range(50):  # 50 random accounts
     acct_num = ''.join(random.choices(string.digits, k=6))  # 6-digit account number
     balance = round(random.uniform(100, 5000), 2)  # Random balance £100-£5000
     first = random.choice(first_names)
@@ -32,4 +32,4 @@ for i in range(10):  # 10 random accounts
 
 conn.commit()
 conn.close()
-print("Added 10 random accounts!")
+print("Added 50 random accounts!")

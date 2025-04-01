@@ -1,15 +1,34 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, redirect, url_for
+from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user
 import sqlite3
 import time
 import random
 import string
+import bcrypt
 
 app = Flask(__name__)
+app.secret_key = 'your-secret-key-here'  # Replace with a secure key
 
-# Fake fraud check stub
-def check_fraud(account, amount):
-    time.sleep(1)  # Simulate 1-second delay
-    return amount < 1000  # Approve if under £1000
+# Flask-Login setup
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+
+# User class for Flask-Login
+class User(UserMixin):
+    def __init__(self, username):
+        self.id = username
+
+@login_manager.user_loader
+def load_user(username):
+    conn = sqlite3.connect('bank.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT username FROM users WHERE username = ?", (username,))
+    user = cursor.fetchone()
+    conn.close()
+    if user:
+        return User(user[0])
+    return None
 
 # Basic CSS for all pages
 BASE_STYLE = """
@@ -22,10 +41,15 @@ BASE_STYLE = """
         .success { color: green; }
         .error { color: red; }
         form { margin-top: 10px; }
-        input[type="text"], input[type="number"] { padding: 5px; }
+        input[type="text"], input[type="number"], input[type="password"] { padding: 5px; }
         input[type="submit"] { padding: 5px 10px; background-color: #4CAF50; color: white; border: none; cursor: pointer; }
     </style>
 """
+
+# Fake fraud check stub
+def check_fraud(account, amount):
+    time.sleep(1)  # Simulate 1-second delay
+    return amount < 1000  # Approve if under £1000
 
 @app.route('/')
 def home():
@@ -36,14 +60,14 @@ def home():
             Account Number: <input type="text" name="account" required>
             <input type="submit" value="Check Balance">
         </form>
-        <p><a href="/deposit">Make a Deposit</a> | <a href="/withdraw">Withdraw Funds</a> | <a href="/history">View Transaction History</a> | <a href="/list">List Accounts</a> | <a href="/open_account">Open Account</a> | <a href="/login">Login</a></p>
+        <p><a href="/deposit">Make a Deposit</a> | <a href="/withdraw">Withdraw Funds</a> | <a href="/history">View Transaction History</a> | <a href="/list">List Accounts</a> | <a href="/open_account">Open Account</a> | <a href="/login">Login</a> | <a href="/logout">Logout</a></p>
     """
 
 @app.route('/check', methods=['GET', 'POST'])
 def check_balance():
     if request.method == 'POST':
         account = request.form['account']
-    else:  # GET
+    else:
         account = request.args.get('account', '1234')
     conn = sqlite3.connect('bank.db')
     cursor = conn.cursor()
@@ -70,6 +94,7 @@ def check_balance():
     return f"{BASE_STYLE}<h1>Test Bank</h1><p class='error'>Account {account} not found</p><a href='/'>Back</a>"
 
 @app.route('/deposit', methods=['GET', 'POST'])
+@login_required
 def deposit():
     if request.method == 'POST':
         account = request.form['account']
@@ -107,6 +132,7 @@ def deposit():
     """
 
 @app.route('/withdraw', methods=['GET', 'POST'])
+@login_required
 def withdraw():
     if request.method == 'POST':
         account = request.form['account']
@@ -145,6 +171,7 @@ def withdraw():
     """
 
 @app.route('/history', methods=['GET', 'POST'])
+@login_required
 def history():
     if request.method == 'POST':
         account = request.form['account']
@@ -193,16 +220,38 @@ def api_history(account):
         return jsonify([{"amount": t[0], "type": t[1], "timestamp": t[2]} for t in transactions]), 200
     return jsonify({"error": "No transactions found"}), 404
 
-@app.route('/list', methods=['GET'])
+@app.route('/list', methods=['GET', 'POST'])
 def list_accounts():
     page = int(request.args.get('page', 1))
     per_page = 50  # 50 accounts per page
     offset = (page - 1) * per_page
+    search_query = request.form.get('search', '') if request.method == 'POST' else request.args.get('search', '')
+
     conn = sqlite3.connect('bank.db')
     cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM accounts")
+    
+    # Count total accounts with search filter
+    if search_query:
+        cursor.execute("""
+            SELECT COUNT(*) FROM accounts 
+            WHERE account_number LIKE ? OR first_name LIKE ? OR last_name LIKE ?
+        """, (f'%{search_query}%', f'%{search_query}%', f'%{search_query}%'))
+    else:
+        cursor.execute("SELECT COUNT(*) FROM accounts")
     total = cursor.fetchone()[0]
-    cursor.execute("SELECT account_number, first_name, last_name, balance FROM accounts LIMIT ? OFFSET ?", (per_page, offset))
+
+    # Fetch accounts with search filter
+    if search_query:
+        cursor.execute("""
+            SELECT account_number, first_name, last_name, balance FROM accounts 
+            WHERE account_number LIKE ? OR first_name LIKE ? OR last_name LIKE ?
+            LIMIT ? OFFSET ?
+        """, (f'%{search_query}%', f'%{search_query}%', f'%{search_query}%', per_page, offset))
+    else:
+        cursor.execute("""
+            SELECT account_number, first_name, last_name, balance FROM accounts 
+            LIMIT ? OFFSET ?
+        """, (per_page, offset))
     accounts = cursor.fetchall()
     conn.close()
     
@@ -214,11 +263,18 @@ def list_accounts():
     
     pagination = f"<p>Page {page} of {total_pages}</p>"
     if page > 1:
-        pagination += f"<a href='/list?page={page-1}'>Previous</a> "
+        pagination += f"<a href='/list?page={page-1}&search={search_query}'>Previous</a> "
     if page < total_pages:
-        pagination += f"<a href='/list?page={page+1}'>Next</a>"
+        pagination += f"<a href='/list?page={page+1}&search={search_query}'>Next</a>"
     
-    return f"{BASE_STYLE}<h1>Test Bank - Account List</h1>{table}{pagination}<p><a href='/'>Back</a></p>"
+    search_form = f"""
+        <form action="/list" method="POST">
+            Search: <input type="text" name="search" value="{search_query}">
+            <input type="submit" value="Search">
+        </form>
+    """
+    
+    return f"{BASE_STYLE}<h1>Test Bank - Account List</h1>{search_form}{table}{pagination}<p><a href='/'>Back</a></p>"
 
 @app.route('/open_account', methods=['GET', 'POST'])
 def open_account():
@@ -280,22 +336,29 @@ def login():
         password = request.form['password']
         conn = sqlite3.connect('bank.db')
         cursor = conn.cursor()
-        cursor.execute("SELECT username FROM users WHERE username = ? AND password = ?", (username, password))
-        result = cursor.fetchone()
+        cursor.execute("SELECT username, password FROM users WHERE username = ?", (username,))
+        user = cursor.fetchone()
         conn.close()
-        if result:
-            return f"{BASE_STYLE}<h1>Test Bank</h1><p class='success'>Welcome, {username}!</p><a href='/'>Back</a>"
+        if user and bcrypt.checkpw(password.encode('utf-8'), user[1]):
+            login_user(User(user[0]))
+            return redirect(url_for('home'))
         return f"{BASE_STYLE}<h1>Test Bank</h1><p class='error'>Invalid username or password</p><a href='/login'>Try again</a>"
     return f"""
         {BASE_STYLE}
         <h1>Test Bank - Login</h1>
         <form action="/login" method="POST">
             Username: <input type="text" name="username" required><br>
-            Password: <input type="text" name="password" required><br>
+            Password: <input type="password" name="password" required><br>
             <input type="submit" value="Login">
         </form>
         <a href="/">Back</a>
     """
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for('home'))
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=5000)

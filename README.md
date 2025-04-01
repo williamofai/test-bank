@@ -33,4 +33,4 @@ A complex banking app built to showcase system design, testability, and practica
 Try it at `http://144.126.239.47:5000`!
 
 ## Load Test
-Run `./load_test.sh`—hits `/api/balance/1234` 100 times concurrently.
+Run `./load_test.sh`—hits `/api/balance/1234` 500 times sequentially. With a 100ms delay per request, it completes in ~55s, proving consistent latency handling.

@@ -37,17 +37,27 @@ def home():
         <p><a href="/deposit">Make a Deposit</a> | <a href="/withdraw">Withdraw Funds</a> | <a href="/history">View Transaction History</a> | <a href="/login">Login</a></p>
     """
 
-@app.route('/check', methods=['POST'])
+@app.route('/check', methods=['GET', 'POST'])
 def check_balance():
-    account = request.form['account']
+    if request.method == 'POST':
+        account = request.form['account']
+    else:  # GET
+        account = request.args.get('account', '1234')  # Default to 1234 if no param
     conn = sqlite3.connect('bank.db')
     cursor = conn.cursor()
-    cursor.execute("SELECT balance FROM accounts WHERE account_number = ?", (account,))
+    cursor.execute("SELECT * FROM accounts WHERE account_number = ?", (account,))
     result = cursor.fetchone()
     conn.close()
     if result:
-        balance = "{:.2f}".format(result[0])
-        return f"{BASE_STYLE}<h1>Test Bank</h1><p class='success'>Account {account}: £{balance} available</p><a href='/'>Back</a>"
+        balance = "{:.2f}".format(result[1])
+        details = f"""
+            <p class='success'>Account {account}: £{balance} available</p>
+            <p>First Name: {result[2]}</p>
+            <p>Last Name: {result[3]}</p>
+            <p>DOB: {result[4]}</p>
+            <p>Address: {result[5]} {result[6]}, {result[7]}, {result[8]}, {result[9]}</p>
+        """
+        return f"{BASE_STYLE}<h1>Test Bank</h1>{details}<a href='/'>Back</a>"
     return f"{BASE_STYLE}<h1>Test Bank</h1><p class='error'>Account {account} not found</p><a href='/'>Back</a>"
 
 @app.route('/deposit', methods=['GET', 'POST'])
@@ -153,7 +163,7 @@ def history():
 
 @app.route('/api/balance/<account>', methods=['GET'])
 def api_balance(account):
-    time.sleep(0.1)  # 100ms delay added here
+    time.sleep(0.1)  # 100ms delay
     conn = sqlite3.connect('bank.db')
     cursor = conn.cursor()
     cursor.execute("SELECT balance FROM accounts WHERE account_number = ?", (account,))

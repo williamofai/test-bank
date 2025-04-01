@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, redirect, url_for
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user
-import sqlite3
+import psycopg2
 import time
 import random
 import string
@@ -21,14 +21,24 @@ class User(UserMixin):
 
 @login_manager.user_loader
 def load_user(username):
-    conn = sqlite3.connect('bank.db')
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT username FROM users WHERE username = ?", (username,))
+    cursor.execute("SELECT username FROM users WHERE username = %s", (username,))
     user = cursor.fetchone()
+    cursor.close()
     conn.close()
     if user:
         return User(user[0])
     return None
+
+# PostgreSQL connection
+def get_db_connection():
+    return psycopg2.connect(
+        dbname="test_bank",
+        user="test_user",
+        password="TestBank2025",  # Updated password
+        host="localhost"
+    )
 
 # Basic CSS for all pages
 BASE_STYLE = """
@@ -60,7 +70,7 @@ def home():
             Account Number: <input type="text" name="account" required>
             <input type="submit" value="Check Balance">
         </form>
-        <p><a href="/deposit">Make a Deposit</a> | <a href="/withdraw">Withdraw Funds</a> | <a href="/history">View Transaction History</a> | <a href="/list">List Accounts</a> | <a href="/open_account">Open Account</a> | <a href="/login">Login</a> | <a href="/logout">Logout</a></p>
+        <p><a href="/deposit">Make a Deposit</a> | <a href="/withdraw">Withdraw Funds</a> | <a href="/history">View Transaction History</a> | <a href="/list">List Accounts</a> | <a href="/open_account">Open Account</a> | <a href="/register">Register</a> | <a href="/login">Login</a> | <a href="/logout">Logout</a></p>
     """
 
 @app.route('/check', methods=['GET', 'POST'])
@@ -69,14 +79,15 @@ def check_balance():
         account = request.form['account']
     else:
         account = request.args.get('account', '1234')
-    conn = sqlite3.connect('bank.db')
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
         SELECT account_number, balance, first_name, last_name, dob, 
         address_line_one, address_line_two, town, city, post_code 
-        FROM accounts WHERE account_number = ?
+        FROM accounts WHERE account_number = %s
     """, (account,))
     result = cursor.fetchone()
+    cursor.close()
     conn.close()
     if result:
         balance = "{:.2f}".format(result[1])
@@ -108,16 +119,18 @@ def deposit():
         if not check_fraud(account, amount):
             return f"{BASE_STYLE}<h1>Test Bank</h1><p class='error'>Deposit of £{amount:.2f} to {account} rejected by fraud check</p><a href='/'>Back</a>"
         
-        conn = sqlite3.connect('bank.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("UPDATE accounts SET balance = balance + ? WHERE account_number = ?", (amount, account))
+        cursor.execute("UPDATE accounts SET balance = balance + %s WHERE account_number = %s", (amount, account))
         if cursor.rowcount == 0:
+            cursor.close()
             conn.close()
             return f"{BASE_STYLE}<h1>Test Bank</h1><p class='error'>Account {account} not found</p><a href='/'>Back</a>"
-        cursor.execute("INSERT INTO transactions (account_number, amount, type) VALUES (?, ?, 'deposit')", (account, amount))
+        cursor.execute("INSERT INTO transactions (account_number, amount, type) VALUES (%s, %s, 'deposit')", (account, amount))
         conn.commit()
-        cursor.execute("SELECT balance FROM accounts WHERE account_number = ?", (account,))
+        cursor.execute("SELECT balance FROM accounts WHERE account_number = %s", (account,))
         result = cursor.fetchone()
+        cursor.close()
         conn.close()
         return f"{BASE_STYLE}<h1>Test Bank</h1><p class='success'>Deposited £{amount:.2f} to {account}. New balance: £{result[0]:.2f}</p><a href='/'>Back</a>"
     return f"""
@@ -142,21 +155,24 @@ def withdraw():
                 return f"{BASE_STYLE}<h1>Test Bank</h1><p class='error'>Amount must be positive</p><a href='/withdraw'>Back</a>"
         except ValueError:
             return f"{BASE_STYLE}<h1>Test Bank</h1><p class='error'>Invalid amount</p><a href='/withdraw'>Back</a>"
-        conn = sqlite3.connect('bank.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT balance FROM accounts WHERE account_number = ?", (account,))
+        cursor.execute("SELECT balance FROM accounts WHERE account_number = %s", (account,))
         result = cursor.fetchone()
         if result:
             if result[0] >= amount:
-                cursor.execute("UPDATE accounts SET balance = balance - ? WHERE account_number = ?", (amount, account))
-                cursor.execute("INSERT INTO transactions (account_number, amount, type) VALUES (?, ?, 'withdraw')", (account, amount))
+                cursor.execute("UPDATE accounts SET balance = balance - %s WHERE account_number = %s", (amount, account))
+                cursor.execute("INSERT INTO transactions (account_number, amount, type) VALUES (%s, %s, 'withdraw')", (account, amount))
                 conn.commit()
-                cursor.execute("SELECT balance FROM accounts WHERE account_number = ?", (account,))
+                cursor.execute("SELECT balance FROM accounts WHERE account_number = %s", (account,))
                 new_balance = cursor.fetchone()[0]
+                cursor.close()
                 conn.close()
                 return f"{BASE_STYLE}<h1>Test Bank</h1><p class='success'>Withdrew £{amount:.2f} from {account}. New balance: £{new_balance:.2f}</p><a href='/'>Back</a>"
+            cursor.close()
             conn.close()
             return f"{BASE_STYLE}<h1>Test Bank</h1><p class='error'>Insufficient funds in {account}</p><a href='/'>Back</a>"
+        cursor.close()
         conn.close()
         return f"{BASE_STYLE}<h1>Test Bank</h1><p class='error'>Account {account} not found</p><a href='/'>Back</a>"
     return f"""
@@ -175,10 +191,11 @@ def withdraw():
 def history():
     if request.method == 'POST':
         account = request.form['account']
-        conn = sqlite3.connect('bank.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT amount, type, timestamp FROM transactions WHERE account_number = ? ORDER BY timestamp DESC", (account,))
+        cursor.execute("SELECT amount, type, timestamp FROM transactions WHERE account_number = %s ORDER BY timestamp DESC", (account,))
         transactions = cursor.fetchall()
+        cursor.close()
         conn.close()
         if transactions:
             table = "<table><tr><th>Amount</th><th>Type</th><th>Time</th></tr>"
@@ -200,10 +217,11 @@ def history():
 @app.route('/api/balance/<account>', methods=['GET'])
 def api_balance(account):
     time.sleep(0.1)  # 100ms delay
-    conn = sqlite3.connect('bank.db')
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT balance FROM accounts WHERE account_number = ?", (account,))
+    cursor.execute("SELECT balance FROM accounts WHERE account_number = %s", (account,))
     result = cursor.fetchone()
+    cursor.close()
     conn.close()
     if result:
         return jsonify({"account": account, "balance": result[0]}), 200
@@ -211,10 +229,11 @@ def api_balance(account):
 
 @app.route('/api/history/<account>', methods=['GET'])
 def api_history(account):
-    conn = sqlite3.connect('bank.db')
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT amount, type, timestamp FROM transactions WHERE account_number = ? ORDER BY timestamp DESC", (account,))
+    cursor.execute("SELECT amount, type, timestamp FROM transactions WHERE account_number = %s ORDER BY timestamp DESC", (account,))
     transactions = cursor.fetchall()
+    cursor.close()
     conn.close()
     if transactions:
         return jsonify([{"amount": t[0], "type": t[1], "timestamp": t[2]} for t in transactions]), 200
@@ -227,14 +246,14 @@ def list_accounts():
     offset = (page - 1) * per_page
     search_query = request.form.get('search', '') if request.method == 'POST' else request.args.get('search', '')
 
-    conn = sqlite3.connect('bank.db')
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     # Count total accounts with search filter
     if search_query:
         cursor.execute("""
             SELECT COUNT(*) FROM accounts 
-            WHERE account_number LIKE ? OR first_name LIKE ? OR last_name LIKE ?
+            WHERE account_number LIKE %s OR first_name LIKE %s OR last_name LIKE %s
         """, (f'%{search_query}%', f'%{search_query}%', f'%{search_query}%'))
     else:
         cursor.execute("SELECT COUNT(*) FROM accounts")
@@ -244,15 +263,16 @@ def list_accounts():
     if search_query:
         cursor.execute("""
             SELECT account_number, first_name, last_name, balance FROM accounts 
-            WHERE account_number LIKE ? OR first_name LIKE ? OR last_name LIKE ?
-            LIMIT ? OFFSET ?
+            WHERE account_number LIKE %s OR first_name LIKE %s OR last_name LIKE %s
+            LIMIT %s OFFSET %s
         """, (f'%{search_query}%', f'%{search_query}%', f'%{search_query}%', per_page, offset))
     else:
         cursor.execute("""
             SELECT account_number, first_name, last_name, balance FROM accounts 
-            LIMIT ? OFFSET ?
+            LIMIT %s OFFSET %s
         """, (per_page, offset))
     accounts = cursor.fetchall()
+    cursor.close()
     conn.close()
     
     total_pages = (total + per_page - 1) // per_page
@@ -292,21 +312,23 @@ def open_account():
         # Generate a unique 6-digit account number
         while True:
             account_number = ''.join(random.choices(string.digits, k=6))
-            conn = sqlite3.connect('bank.db')
+            conn = get_db_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT 1 FROM accounts WHERE account_number = ?", (account_number,))
+            cursor.execute("SELECT 1 FROM accounts WHERE account_number = %s", (account_number,))
             if not cursor.fetchone():
                 break
+            cursor.close()
             conn.close()
         
         # Insert the new account
         cursor.execute("""
             INSERT INTO accounts (account_number, balance, first_name, last_name, dob, 
             address_line_one, address_line_two, town, city, post_code)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (account_number, initial_balance, first_name, last_name, dob, 
               address_line_one, address_line_two, town, city, post_code))
         conn.commit()
+        cursor.close()
         conn.close()
         
         return f"{BASE_STYLE}<h1>Test Bank</h1><p class='success'>Account {account_number} created successfully!</p><a href='/'>Back</a>"
@@ -329,19 +351,62 @@ def open_account():
         <a href="/">Back</a>
     """
 
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        
+        # Validate input
+        if not username or not password:
+            return f"{BASE_STYLE}<h1>Test Bank</h1><p class='error'>Username and password are required</p><a href='/register'>Try again</a>"
+        
+        # Check if username already exists
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT username FROM users WHERE username = %s", (username,))
+        if cursor.fetchone():
+            cursor.close()
+            conn.close()
+            return f"{BASE_STYLE}<h1>Test Bank</h1><p class='error'>Username {username} already exists</p><a href='/register'>Try again</a>"
+        
+        # Hash the password and insert the new user
+        hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+        cursor.execute("INSERT INTO users (username, password) VALUES (%s, %s)", (username, hashed))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return f"{BASE_STYLE}<h1>Test Bank</h1><p class='success'>User {username} registered successfully!</p><a href='/login'>Login</a>"
+    
+    return f"""
+        {BASE_STYLE}
+        <h1>Test Bank - Register</h1>
+        <form action="/register" method="POST">
+            Username: <input type="text" name="username" required><br>
+            Password: <input type="password" name="password" required><br>
+            <input type="submit" value="Register">
+        </form>
+        <a href="/">Back</a>
+    """
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
-        conn = sqlite3.connect('bank.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT username, password FROM users WHERE username = ?", (username,))
+        cursor.execute("SELECT username, password FROM users WHERE username = %s", (username,))
         user = cursor.fetchone()
+        cursor.close()
         conn.close()
-        if user and bcrypt.checkpw(password.encode('utf-8'), user[1]):
-            login_user(User(user[0]))
-            return redirect(url_for('home'))
+        if user:
+            # Convert memoryview to bytes for bcrypt
+            stored_password = user[1].tobytes() if isinstance(user[1], memoryview) else user[1]
+            if bcrypt.checkpw(password.encode('utf-8'), stored_password):
+                login_user(User(user[0]))
+                return redirect(url_for('home'))
         return f"{BASE_STYLE}<h1>Test Bank</h1><p class='error'>Invalid username or password</p><a href='/login'>Try again</a>"
     return f"""
         {BASE_STYLE}

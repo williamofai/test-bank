@@ -42,7 +42,7 @@ def check_balance():
     if request.method == 'POST':
         account = request.form['account']
     else:  # GET
-        account = request.args.get('account', '1234')  # Default to 1234 if no param
+        account = request.args.get('account', '1234')  # Default to 1234
     conn = sqlite3.connect('bank.db')
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM accounts WHERE account_number = ?", (account,))

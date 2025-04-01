@@ -1,6 +1,8 @@
 from flask import Flask, request, jsonify
 import sqlite3
 import time
+import random
+import string
 
 app = Flask(__name__)
 
@@ -34,7 +36,7 @@ def home():
             Account Number: <input type="text" name="account" required>
             <input type="submit" value="Check Balance">
         </form>
-        <p><a href="/deposit">Make a Deposit</a> | <a href="/withdraw">Withdraw Funds</a> | <a href="/history">View Transaction History</a> | <a href="/login">Login</a></p>
+        <p><a href="/deposit">Make a Deposit</a> | <a href="/withdraw">Withdraw Funds</a> | <a href="/history">View Transaction History</a> | <a href="/list">List Accounts</a> | <a href="/open_account">Open Account</a> | <a href="/login">Login</a></p>
     """
 
 @app.route('/check', methods=['GET', 'POST'])
@@ -42,7 +44,7 @@ def check_balance():
     if request.method == 'POST':
         account = request.form['account']
     else:  # GET
-        account = request.args.get('account', '1234')  # Default to 1234
+        account = request.args.get('account', '1234')
     conn = sqlite3.connect('bank.db')
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM accounts WHERE account_number = ?", (account,))
@@ -52,10 +54,13 @@ def check_balance():
         balance = "{:.2f}".format(result[1])
         details = f"""
             <p class='success'>Account {account}: £{balance} available</p>
-            <p>First Name: {result[2]}</p>
-            <p>Last Name: {result[3]}</p>
-            <p>DOB: {result[4]}</p>
-            <p>Address: {result[5]} {result[6]}, {result[7]}, {result[8]}, {result[9]}</p>
+            <table>
+                <tr><th>Field</th><th>Value</th></tr>
+                <tr><td>First Name</td><td>{result[2]}</td></tr>
+                <tr><td>Last Name</td><td>{result[3]}</td></tr>
+                <tr><td>DOB</td><td>{result[4]}</td></tr>
+                <tr><td>Address</td><td>{result[5]} {result[6]}, {result[7]}, {result[8]}, {result[9]}</td></tr>
+            </table>
         """
         return f"{BASE_STYLE}<h1>Test Bank</h1>{details}<a href='/'>Back</a>"
     return f"{BASE_STYLE}<h1>Test Bank</h1><p class='error'>Account {account} not found</p><a href='/'>Back</a>"
@@ -183,6 +188,86 @@ def api_history(account):
     if transactions:
         return jsonify([{"amount": t[0], "type": t[1], "timestamp": t[2]} for t in transactions]), 200
     return jsonify({"error": "No transactions found"}), 404
+
+@app.route('/list', methods=['GET'])
+def list_accounts():
+    page = int(request.args.get('page', 1))
+    per_page = 50  # 50 accounts per page
+    offset = (page - 1) * per_page
+    conn = sqlite3.connect('bank.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM accounts")
+    total = cursor.fetchone()[0]
+    cursor.execute("SELECT account_number, first_name, last_name, balance FROM accounts LIMIT ? OFFSET ?", (per_page, offset))
+    accounts = cursor.fetchall()
+    conn.close()
+    
+    total_pages = (total + per_page - 1) // per_page
+    table = "<table><tr><th>Account Number</th><th>First Name</th><th>Last Name</th><th>Balance</th></tr>"
+    for acc in accounts:
+        table += f"<tr><td><a href='/check?account={acc[0]}'>{acc[0]}</a></td><td>{acc[1]}</td><td>{acc[2]}</td><td>£{acc[3]:.2f}</td></tr>"
+    table += "</table>"
+    
+    pagination = f"<p>Page {page} of {total_pages}</p>"
+    if page > 1:
+        pagination += f"<a href='/list?page={page-1}'>Previous</a> "
+    if page < total_pages:
+        pagination += f"<a href='/list?page={page+1}'>Next</a>"
+    
+    return f"{BASE_STYLE}<h1>Test Bank - Account List</h1>{table}{pagination}<p><a href='/'>Back</a></p>"
+
+@app.route('/open_account', methods=['GET', 'POST'])
+def open_account():
+    if request.method == 'POST':
+        first_name = request.form['first_name']
+        last_name = request.form['last_name']
+        dob = request.form['dob']
+        address_line_one = request.form['address_line_one']
+        address_line_two = request.form['address_line_two']
+        town = request.form['town']
+        city = request.form['city']
+        post_code = request.form['post_code']
+        initial_balance = float(request.form['initial_balance'])
+        
+        # Generate a unique 6-digit account number
+        while True:
+            account_number = ''.join(random.choices(string.digits, k=6))
+            conn = sqlite3.connect('bank.db')
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM accounts WHERE account_number = ?", (account_number,))
+            if not cursor.fetchone():
+                break
+            conn.close()
+        
+        # Insert the new account
+        cursor.execute("""
+            INSERT INTO accounts (account_number, balance, first_name, last_name, dob, 
+            address_line_one, address_line_two, town, city, post_code)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (account_number, initial_balance, first_name, last_name, dob, 
+              address_line_one, address_line_two, town, city, post_code))
+        conn.commit()
+        conn.close()
+        
+        return f"{BASE_STYLE}<h1>Test Bank</h1><p class='success'>Account {account_number} created successfully!</p><a href='/'>Back</a>"
+    
+    return f"""
+        {BASE_STYLE}
+        <h1>Test Bank - Open Account</h1>
+        <form action="/open_account" method="POST">
+            First Name: <input type="text" name="first_name" required><br>
+            Last Name: <input type="text" name="last_name" required><br>
+            DOB (YYYY-MM-DD): <input type="text" name="dob" required><br>
+            Address Line 1: <input type="text" name="address_line_one" required><br>
+            Address Line 2: <input type="text" name="address_line_two"><br>
+            Town: <input type="text" name="town" required><br>
+            City: <input type="text" name="city" required><br>
+            Post Code: <input type="text" name="post_code" required><br>
+            Initial Balance: <input type="number" name="initial_balance" step="0.01" min="0" value="0.00" required><br>
+            <input type="submit" value="Open Account">
+        </form>
+        <a href="/">Back</a>
+    """
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():

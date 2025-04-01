@@ -2,7 +2,6 @@ import sqlite3
 import random
 import string
 
-# Sample data pools
 first_names = ['John', 'Emma', 'Liam', 'Olivia', 'Noah', 'Ava', 'James', 'Sophia']
 last_names = ['Doe', 'Smith', 'Brown', 'Wilson', 'Taylor', 'Clark', 'Lewis', 'Walker']
 towns = ['Smallville', 'Greentown', 'Bluetown', 'Redhill']
@@ -12,9 +11,9 @@ streets = ['High Street', 'Main Road', 'Park Lane', 'Church Street']
 conn = sqlite3.connect('bank.db')
 cursor = conn.cursor()
 
-for i in range(50):  # 50 random accounts
-    acct_num = ''.join(random.choices(string.digits, k=6))  # 6-digit account number
-    balance = round(random.uniform(100, 5000), 2)  # Random balance £100-£5000
+for i in range(1000):  # 1000 random accounts
+    acct_num = ''.join(random.choices(string.digits, k=6))
+    balance = round(random.uniform(100, 5000), 2)
     first = random.choice(first_names)
     last = random.choice(last_names)
     dob = f"{random.randint(1960, 2005)}-{random.randint(1, 12):02d}-{random.randint(1, 28):02d}"
@@ -32,4 +31,4 @@ for i in range(50):  # 50 random accounts
 
 conn.commit()
 conn.close()
-print("Added 50 random accounts!")
+print("Added 1000 random accounts!")

@@ -39,4 +39,4 @@ Run `./load_test.sh`—hits `/api/balance/1234` 500 times sequentially. With a 1
 Run `python3 generate_accounts.py` to add 1000 random accounts with personal details (names, DOB, addresses, balances £100-£5000). Current total: 1061 accounts.
 
 ## Performance Testing
-Run `python3 load_test_open_account.py` to simulate account openings for 60 seconds. Example: Created 150 accounts in 60.12 seconds (2.50 accounts/sec).
+Run `python3 load_test_open_account.py` to simulate account openings for 60 seconds. Latest result: Created 14,459 accounts in 60.00 seconds (240.98 accounts/sec). Total accounts: 29,988.

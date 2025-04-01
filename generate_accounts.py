@@ -16,7 +16,10 @@ for i in range(1000):  # 1000 random accounts
     balance = round(random.uniform(100, 5000), 2)
     first = random.choice(first_names)
     last = random.choice(last_names)
-    dob = f"{random.randint(1960, 2005)}-{random.randint(1, 12):02d}-{random.randint(1, 28):02d}"
+    day = random.randint(1, 28)
+    month = random.randint(1, 12)
+    year = random.randint(1960, 2005)
+    dob = f"{day:02d}{month:02d}{year}"  # DDMMYYYY format
     addr1 = f"{random.randint(1, 999)} {random.choice(streets)}"
     addr2 = '' if random.random() < 0.7 else f"Flat {random.randint(1, 20)}"
     town = random.choice(towns)

@@ -47,18 +47,22 @@ def check_balance():
         account = request.args.get('account', '1234')
     conn = sqlite3.connect('bank.db')
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM accounts WHERE account_number = ?", (account,))
+    cursor.execute("""
+        SELECT account_number, balance, first_name, last_name, dob, 
+        address_line_one, address_line_two, town, city, post_code 
+        FROM accounts WHERE account_number = ?
+    """, (account,))
     result = cursor.fetchone()
     conn.close()
     if result:
         balance = "{:.2f}".format(result[1])
         details = f"""
-            <p class='success'>Account {account}: £{balance} available</p>
+            <p class='success'>Account {result[0]}: £{balance} available</p>
             <table>
                 <tr><th>Field</th><th>Value</th></tr>
                 <tr><td>First Name</td><td>{result[2]}</td></tr>
                 <tr><td>Last Name</td><td>{result[3]}</td></tr>
-                <tr><td>DOB</td><td>{result[4]}</td></tr>
+                <tr><td>DOB (DDMMYYYY)</td><td>{result[4]}</td></tr>
                 <tr><td>Address</td><td>{result[5]} {result[6]}, {result[7]}, {result[8]}, {result[9]}</td></tr>
             </table>
         """
@@ -257,7 +261,7 @@ def open_account():
         <form action="/open_account" method="POST">
             First Name: <input type="text" name="first_name" required><br>
             Last Name: <input type="text" name="last_name" required><br>
-            DOB (YYYY-MM-DD): <input type="text" name="dob" required><br>
+            DOB (DDMMYYYY): <input type="text" name="dob" required><br>
             Address Line 1: <input type="text" name="address_line_one" required><br>
             Address Line 2: <input type="text" name="address_line_two"><br>
             Town: <input type="text" name="town" required><br>

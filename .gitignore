@@ -1,0 +1,18 @@
+# Database files
+bank.db
+bank.db.bak
+
+# Log files
+gunicorn_access.log
+gunicorn_error.log
+cookies.txt
+
+# Python cache and temporary files
+__pycache__/
+*.pyc
+
+# Backup files
+*.bak
+
+# Problematic file with secrets
+test-bank.git

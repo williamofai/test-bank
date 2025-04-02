@@ -1,62 +1,80 @@
 import requests
-import time
 import random
-import string
-import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 
-first_names = ['John', 'Emma', 'Liam', 'Olivia', 'Noah', 'Ava', 'James', 'Sophia']
-last_names = ['Doe', 'Smith', 'Brown', 'Wilson', 'Taylor', 'Clark', 'Lewis', 'Walker']
-towns = ['Smallville', 'Greentown', 'Bluetown', 'Redhill']
-cities = ['London', 'Manchester', 'Birmingham', 'Leeds']
-streets = ['High Street', 'Main Road', 'Park Lane', 'Church Street']
+BASE_URL = "http://144.126.239.47:5000"
+OPEN_ACCOUNT_ENDPOINT = f"{BASE_URL}/open_account"
+NUM_REQUESTS = 1000  # Number of accounts to open
+MAX_THREADS = 10
 
-def open_account():
-    url = "http://144.126.239.47:5000/open_account"
-    day = random.randint(1, 28)
-    month = random.randint(1, 12)
-    year = random.randint(1960, 2005)
-    data = {
-        'first_name': random.choice(first_names),
-        'last_name': random.choice(last_names),
-        'dob': f"{day:02d}{month:02d}{year}",  # DDMMYYYY format
-        'address_line_one': f"{random.randint(1, 999)} {random.choice(streets)}",
-        'address_line_two': '' if random.random() < 0.7 else f"Flat {random.randint(1, 20)}",
-        'town': random.choice(towns),
-        'city': random.choice(cities),
-        'post_code': f"{''.join(random.choices(string.ascii_uppercase, k=2))}{random.randint(1, 9)} {random.randint(1, 9)}{''.join(random.choices(string.ascii_uppercase, k=2))}",
-        'initial_balance': round(random.uniform(100, 5000), 2)
+# Sample data for account creation
+NAMES = ["John", "Jane", "Alice", "Bob", "Charlie", "David", "Emma", "Frank"]
+LAST_NAMES = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller"]
+CITIES = ["London", "Manchester", "Birmingham", "Leeds", "Glasgow"]
+TOWNS = ["West End", "Downtown", "Uptown", "Riverside", "Hillside"]
+
+def create_account():
+    first_name = random.choice(NAMES)
+    last_name = random.choice(LAST_NAMES)
+    dob = f"{random.randint(1, 28):02d}{random.randint(1, 12):02d}{random.randint(1970, 2000)}"
+    address_line_one = f"{random.randint(1, 100)} Main St"
+    address_line_two = ""
+    town = random.choice(TOWNS)
+    city = random.choice(CITIES)
+    post_code = f"AB{random.randint(10, 99)} {random.randint(1, 9)}CD"
+    initial_balance = random.uniform(0, 1000)
+
+    payload = {
+        "first_name": first_name,
+        "last_name": last_name,
+        "dob": dob,
+        "address_line_one": address_line_one,
+        "address_line_two": address_line_two,
+        "town": town,
+        "city": city,
+        "post_code": post_code,
+        "initial_balance": str(initial_balance)
     }
+
     try:
-        response = requests.post(url, data=data)
-        if response.status_code == 200:
-            return True
-    except:
-        pass
-    return False
+        start_time = time.time()
+        response = requests.post(OPEN_ACCOUNT_ENDPOINT, data=payload)
+        latency = time.time() - start_time
+        if response.status_code == 200 and "Account" in response.text:
+            print(f"Success: Created account in {latency:.3f}s")
+            return latency, True
+        else:
+            print(f"Failed: {response.text}")
+            return latency, False
+    except Exception as e:
+        print(f"Error: {e}")
+        return 0, False
 
-def load_test(duration):
+def run_load_test():
+    print(f"Starting load test: {NUM_REQUESTS} account openings with {MAX_THREADS} threads...")
     start_time = time.time()
-    success_count = 0
-    threads = []
-
-    def worker():
-        nonlocal success_count
-        while time.time() - start_time < duration:
-            if open_account():
-                success_count += 1
-
-    for _ in range(10):
-        thread = threading.Thread(target=worker)
-        thread.start()
-        threads.append(thread)
-
-    for thread in threads:
-        thread.join(timeout=duration - (time.time() - start_time))
-
-    elapsed = time.time() - start_time
-    print(f"Created {success_count} accounts in {elapsed:.2f} seconds")
-    print(f"Rate: {success_count / elapsed:.2f} accounts per second")
+    
+    latencies = []
+    successes = 0
+    
+    with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
+        results = executor.map(lambda _: create_account(), range(NUM_REQUESTS))
+    
+    for latency, success in results:
+        latencies.append(latency)
+        if success:
+            successes += 1
+    
+    total_time = time.time() - start_time
+    reqs_per_sec = successes / total_time if total_time > 0 else 0
+    avg_latency = sum(latencies) / len(latencies) if latencies else 0
+    
+    print(f"\n--- Load Test Results ---")
+    print(f"Completed in {total_time:.2f} seconds")
+    print(f"Successful account openings: {successes}/{NUM_REQUESTS}")
+    print(f"Requests per second: {reqs_per_sec:.2f}")
+    print(f"Average latency: {avg_latency:.3f} seconds")
 
 if __name__ == "__main__":
-    duration = 60  # Run for 60 seconds
-    load_test(duration)
+    run_load_test()

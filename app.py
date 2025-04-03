@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException, Response, status, Depends
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 import uuid
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI()
 
 # Configuration for JWT (OAuth2)
-SECRET_KEY = "LNSfkiqKBxOnPCnGjv-frqkVwcwpQXxmTOSRtAMkVYE"  # Replace with a secure key in production
+SECRET_KEY = "your-secret-key"  # Replace with a secure key in production
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
@@ -158,6 +158,37 @@ async def shutdown():
     except Exception as e:
         logger.error(f"Error closing Redis connection: {str(e)}")
 
+# HTML UI for root
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    html_content = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Test Bank</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; }
+            h1 { color: #333; }
+            p { font-size: 18px; }
+            .container { max-width: 800px; margin: auto; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Welcome to Test Bank</h1>
+            <p>Your friendly banking app is back online! Use the API endpoints below or check your account balance.</p>
+            <ul>
+                <li><a href="/api/balance/614437">Check Balance (614437)</a> (requires login)</li>
+                <li><a href="/api/history/614437">View History (614437)</a> (requires login)</li>
+            </ul>
+            <p>Login via API: <code>POST /login</code> with {"username": "testuser", "password": "password123"}</p>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
+
 # Endpoints
 @app.post("/login")
 async def login(request: LoginRequest):
@@ -170,10 +201,6 @@ async def login(request: LoginRequest):
         return {"access_token": access_token, "token_type": "bearer"}
     logger.warning(f"Failed login attempt for user {request.username}")
     raise HTTPException(status_code=401, detail="Invalid credentials")
-
-@app.get("/")
-async def root():
-    return {"message": "Welcome to Test Bank"}
 
 @app.post("/transfer")
 async def transfer(request: TransferRequest, current_user: str = Depends(get_current_user)):
@@ -336,7 +363,6 @@ async def register(request: RegisterRequest):
         logger.error(f"Error registering user {request.username}: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to register user")
 
-# New Endpoints from Flask Era
 @app.get("/api/balance/{account_number}")
 async def api_balance(account_number: str, current_user: str = Depends(get_current_user)):
     try:

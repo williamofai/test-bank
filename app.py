@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Response, status, Depends
+from fastapi import FastAPI, HTTPException, Response, status, Depends, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
@@ -172,36 +172,97 @@ async def root():
             h1 { color: #333; }
             p { font-size: 18px; }
             .container { max-width: 800px; margin: auto; }
+            a { color: #0066cc; text-decoration: none; }
+            a:hover { text-decoration: underline; }
         </style>
     </head>
     <body>
         <div class="container">
             <h1>Welcome to Test Bank</h1>
-            <p>Your friendly banking app is back online! Use the API endpoints below or check your account balance.</p>
+            <p>Your friendly banking app is back online! Log in to access your account details.</p>
+            <p><a href="/login">Click here to log in</a></p>
+            <p>API endpoints available after login:</p>
             <ul>
-                <li><a href="/api/balance/614437">Check Balance (614437)</a> (requires login)</li>
-                <li><a href="/api/history/614437">View History (614437)</a> (requires login)</li>
+                <li><a href="/api/balance/614437">Check Balance (614437)</a></li>
+                <li><a href="/api/history/614437">View History (614437)</a></li>
             </ul>
-            <p>Login via API: <code>POST /login</code> with {"username": "testuser", "password": "password123"}</p>
         </div>
     </body>
     </html>
     """
     return HTMLResponse(content=html_content)
 
-# Endpoints
+# Login UI
+@app.get("/login", response_class=HTMLResponse)
+async def login_page():
+    html_content = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Login - Test Bank</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; }
+            h1 { color: #333; }
+            .container { max-width: 400px; margin: auto; }
+            form { display: flex; flex-direction: column; gap: 10px; }
+            input { padding: 8px; font-size: 16px; }
+            button { padding: 10px; background-color: #0066cc; color: white; border: none; cursor: pointer; }
+            button:hover { background-color: #005bb5; }
+            .error { color: red; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Login to Test Bank</h1>
+            <form action="/login" method="post">
+                <input type="text" name="username" placeholder="Username" required>
+                <input type="password" name="password" placeholder="Password" required>
+                <button type="submit">Log In</button>
+            </form>
+            <p>Hint: Use "testuser" and "password123"</p>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
+
 @app.post("/login")
-async def login(request: LoginRequest):
-    if request.username == "testuser" and request.password == "password123":
+async def login(username: str = Form(...), password: str = Form(...)):
+    if username == "testuser" and password == "password123":
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         access_token = create_access_token(
-            data={"sub": request.username}, expires_delta=access_token_expires
+            data={"sub": username}, expires_delta=access_token_expires
         )
-        logger.info(f"User {request.username} logged in successfully")
-        return {"access_token": access_token, "token_type": "bearer"}
-    logger.warning(f"Failed login attempt for user {request.username}")
-    raise HTTPException(status_code=401, detail="Invalid credentials")
+        logger.info(f"User {username} logged in successfully")
+        # Redirect to root with token in query string (simpler for UI)
+        return RedirectResponse(url=f"/?token={access_token}", status_code=303)
+    logger.warning(f"Failed login attempt for user {username}")
+    html_content = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Login Failed - Test Bank</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; }
+            h1 { color: #333; }
+            .container { max-width: 400px; margin: auto; }
+            .error { color: red; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Login Failed</h1>
+            <p class="error">Invalid credentials. Please try again.</p>
+            <p><a href="/login">Back to Login</a></p>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content, status_code=401)
 
+# Other Endpoints
 @app.post("/transfer")
 async def transfer(request: TransferRequest, current_user: str = Depends(get_current_user)):
     try:

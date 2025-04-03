@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI()
 
 # Configuration for JWT (OAuth2)
-SECRET_KEY = "your-secret-key"  # Replace with a secure key in production
+SECRET_KEY = "LNSfkiqKBxOnPCnGjv-frqkVwcwpQXxmTOSRtAMkVYE"  # Replace with a secure key in production
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
@@ -40,7 +40,6 @@ class TransferRequest(BaseModel):
     to_account: str
     amount: float
 
-    # Validation
     @classmethod
     def validate(cls, v):
         if v.amount <= 0:
@@ -162,7 +161,6 @@ async def shutdown():
 # Endpoints
 @app.post("/login")
 async def login(request: LoginRequest):
-    # Simulate user authentication (replace with DB check in production)
     if request.username == "testuser" and request.password == "password123":
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         access_token = create_access_token(
@@ -179,7 +177,6 @@ async def root():
 
 @app.post("/transfer")
 async def transfer(request: TransferRequest, current_user: str = Depends(get_current_user)):
-    # Validate request
     try:
         TransferRequest.validate(request)
     except ValueError as e:
@@ -208,7 +205,6 @@ async def transfer(request: TransferRequest, current_user: str = Depends(get_cur
         logger.info(f"Enqueued transfer: {transfer_id}")
     except Exception as e:
         logger.error(f"Failed to enqueue transfer to Redis: {str(e)}")
-        # Rollback DB insert
         async with app.state.db_pool.acquire() as conn:
             await conn.execute("DELETE FROM transfer_jobs WHERE transfer_id = $1", transfer_id)
         raise HTTPException(status_code=500, detail="Failed to enqueue transfer to Redis")
@@ -332,12 +328,46 @@ async def withdraw(request: WithdrawRequest, current_user: str = Depends(get_cur
 
 @app.post("/register")
 async def register(request: RegisterRequest):
-    # Placeholder - future implementation (e.g., store in a users table)
     try:
         async with app.state.db_pool.acquire() as conn:
-            # Simulate user registration - in production, add to a users table
             logger.info(f"User {request.username} registered - future implementation")
             return {"message": f"User {request.username} registered - future implementation"}
     except Exception as e:
         logger.error(f"Error registering user {request.username}: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to register user")
+
+# New Endpoints from Flask Era
+@app.get("/api/balance/{account_number}")
+async def api_balance(account_number: str, current_user: str = Depends(get_current_user)):
+    try:
+        async with app.state.db_pool.acquire() as conn:
+            account = await conn.fetchrow("SELECT balance FROM accounts WHERE account_number = $1", account_number)
+            if not account:
+                logger.warning(f"Account {account_number} not found")
+                raise HTTPException(status_code=404, detail="Account not found")
+            return {"account": account_number, "balance": float(account['balance'])}
+    except Exception as e:
+        logger.error(f"Error fetching balance for {account_number}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to fetch balance")
+
+@app.get("/api/history/{account_number}")
+async def api_history(account_number: str, current_user: str = Depends(get_current_user)):
+    try:
+        async with app.state.db_pool.acquire() as conn:
+            transfers = await conn.fetch(
+                "SELECT transfer_id, from_account, to_account, amount, status, result FROM transfer_jobs WHERE from_account = $1 OR to_account = $1",
+                account_number
+            )
+        return [
+            {
+                "transfer_id": t['transfer_id'],
+                "from_account": t['from_account'],
+                "to_account": t['to_account'],
+                "amount": float(t['amount']),
+                "status": t['status'],
+                "result": t['result'] if t['result'] else None
+            } for t in transfers
+        ]
+    except Exception as e:
+        logger.error(f"Error fetching history for {account_number}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to fetch history")

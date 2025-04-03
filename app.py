@@ -227,7 +227,7 @@ async def login_page():
     """
     return HTMLResponse(content=html_content)
 
-@app.post("/login")
+@app.post("/login", response_class=HTMLResponse)
 async def login(username: str = Form(...), password: str = Form(...)):
     if username == "testuser" and password == "password123":
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -235,8 +235,44 @@ async def login(username: str = Form(...), password: str = Form(...)):
             data={"sub": username}, expires_delta=access_token_expires
         )
         logger.info(f"User {username} logged in successfully")
-        # Redirect to root with token in query string (simpler for UI)
-        return RedirectResponse(url=f"/?token={access_token}", status_code=303)
+        html_content = f"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <title>Test Bank Dashboard</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 40px; }}
+                h1 {{ color: #333; }}
+                .container {{ max-width: 800px; margin: auto; }}
+                a {{ color: #0066cc; text-decoration: none; }}
+                a:hover {{ text-decoration: underline; }}
+            </style>
+            <script>
+                const token = "{access_token}";
+                function fetchWithToken(url) {{
+                    fetch(url, {{
+                        headers: {{ "Authorization": "Bearer " + token }}
+                    }})
+                    .then(response => response.json())
+                    .then(data => alert(JSON.stringify(data, null, 2)))
+                    .catch(error => alert("Error: " + error));
+                }}
+            </script>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Welcome, {username}!</h1>
+                <p>You’re logged in. Use the links below to check your account:</p>
+                <ul>
+                    <li><a href="#" onclick="fetchWithToken('/api/balance/614437')">Check Balance (614437)</a></li>
+                    <li><a href="#" onclick="fetchWithToken('/api/history/614437')">View History (614437)</a></li>
+                </ul>
+            </div>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html_content)
     logger.warning(f"Failed login attempt for user {username}")
     html_content = """
     <!DOCTYPE html>

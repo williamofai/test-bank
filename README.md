@@ -1,45 +1,30 @@
 # Test Bank - A Test Architect’s Demo
-...
-Clone repo from `https://github.com/williamofai/test-bank`.
+Clone repo from `https://github.com/williaofai/test-bank`.
 
-A complex banking app built to showcase system design, testability, and practical skills. Deployed on a Digital Ocean droplet (`144.126.239.47:5000`), this project features a REST API, stubbed external services, and a polished UI.
+A complex banking app built to showcase system design, testability, and practical skills. Initially deployed on a Digital Ocean droplet (`144.126.239.47:5000`) with Flask and SQLite, now upgraded to FastAPI, Redis, and PostgreSQL on an Ubuntu VM (2 vCPUs, 2GB RAM).
 
-## Features
-- **Account Lookup:** Check balances via HTML or API (`/api/balance/<account>`).
-- **Deposits/Withdrawals:** With a fraud check stub (rejects >£1000, 1s delay).
-- **Transaction History:** View via UI or API (`/api/history/<account>`).
-- **Mock Login:** Fake user auth with SQLite `users` table.
-- **Testability:** Stubs, logging-ready, and load-tested (100 requests in 0.87s).
-- **UI:** Basic CSS for clean tables and success/error messages.
+## Features (Updated)
+- **REST API:** Endpoints for login, transfers, account management (`/transfer`, `/check`, etc.).
+- **Async Processing:** Redis queue with 6 workers for transfers.
+- **Load Tested:** 5000 transfers at 100% success (36.98 req/s).
+- **DB:** PostgreSQL (`test_bank`) with 33,111 accounts.
 
-## Tech Stack
-- Flask (Python)
-- SQLite (`bank.db`)
-- Digital Ocean droplet (Ubuntu)
+## Tech Stack (Updated)
+- FastAPI (Python)
+- Redis (queue)
+- PostgreSQL (`test_bank`)
+- Ubuntu VM (2 vCPUs, 2GB RAM)
 
-## Why It Rocks for Testing
-- **Stubs:** Fraud check simulates external dependencies—test latency or failures.
-- **API:** JSON endpoints for Postman/curl testing.
-- **NFRs:** Load test script (`load_test.sh`) proves concurrency (100 reqs in <1s).
-- **Audit Trail:** Transaction history ensures data consistency.
+## Latest Results (April 03, 2025)
+- **Config**: FastAPI, 6 Redis workers, PostgreSQL (shared_buffers=512MB), 33,111 accounts @ £1M each.
+- **5000 Transfers**: 100% success (5000/5000), 0.127s latency, 36.98 req/s, 0 failures.
+- **Key Fixes**: Resolved "string indices" error, seeded £1M balances to eliminate "Insufficient funds".
 
 ## Setup
-1. Clone repo.
-2. `sqlite3 bank.db < schema.sql` (creates `accounts`, `transactions`, `users`).
-3. `python3 app.py` (runs on `0.0.0.0:5000`).
-4. Test: `curl http://localhost:5000/api/balance/1234`.
-
-## Live Demo
-Try it at `http://144.126.239.47:5000`!
-
-## Load Test
-Run `./load_test.sh`—hits `/api/balance/1234` 500 times sequentially. With a 100ms delay per request, it completes in ~55s, proving consistent latency handling.
-
-## Data Generation
-Run `python3 generate_accounts.py` to add 1000 random accounts with personal details (names, DOB, addresses, balances £100-£5000). Current total: 1061 accounts.
-
-## Performance Testing
-Run `python3 load_test_open_account.py` to simulate account openings for 60 seconds. Latest result: Created 14,459 accounts in 60.00 seconds (240.98 accounts/sec). Total accounts: 29,988.
-
-## Architecture
-![Test Bank Architecture](test-bank-architecture.png)
+```bash
+pip install -r requirements.txt
+systemctl start redis-server
+systemctl start postgresql
+systemctl start banking-app.service  # Uvicorn service
+for i in {1..6}; do python3 redis_worker.py & done
+./load_test_transfer.py

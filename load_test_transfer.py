@@ -1,288 +1,174 @@
+#!/usr/bin/env python3
 import requests
-import random
-import time
-from concurrent.futures import ThreadPoolExecutor
-from bs4 import BeautifulSoup
 import threading
+import time
+import random
+import json
+from concurrent.futures import ThreadPoolExecutor
+from prometheus_client import Counter, Histogram, start_http_server
 
-# Configuration
-BASE_URL = "http://144.126.239.47:5000"
-TRANSFER_ENDPOINT = f"{BASE_URL}/transfer"
-STATUS_ENDPOINT = f"{BASE_URL}/transfer_status"
-LIST_ENDPOINT = f"{BASE_URL}/list"
-NUM_REQUESTS = 500  # Total transfers to simulate
-MAX_THREADS = 20    # Increased to 20 concurrent threads
+BASE_URL = "http://localhost:5000"
+NUM_TRANSFERS = 5000
+CONCURRENT_THREADS = 5
+STATUS_TIMEOUT = 10
+TRANSFER_AMOUNT_MIN = 50
+TRANSFER_AMOUNT_MAX = 4999.99
 
-# Login credentials (to access protected endpoint)
-LOGIN_URL = f"{BASE_URL}/login"
-LOGIN_DATA = {"username": "testuser", "password": "password123"}
+SESSION = requests.Session()
+VALID_ACCOUNTS = None
+ACCOUNTS_LOCK = threading.Lock()
 
-# Thread-local storage for sessions
-thread_local = threading.local()
+HEADERS = {
+    "Content-Type": "application/json",
+    "Accept": "application/json"
+}
 
-def get_session():
-    """
-    Returns a thread-local requests.Session object.
-    Creates a new session if one doesn't exist for the current thread.
-    """
-    if not hasattr(thread_local, "session"):
-        thread_local.session = requests.Session()
-        # Log in immediately for this thread
-        print(f"Thread {threading.current_thread().name}: Creating new session and logging in...")
-        login_response = thread_local.session.post(LOGIN_URL, data=LOGIN_DATA, allow_redirects=False)
-        if login_response.status_code == 302:
-            # Follow the redirect to the home page
-            home_response = thread_local.session.get(BASE_URL)
-            if home_response.status_code == 200 and "Test Bank" in home_response.text and "Check Balance" in home_response.text:
-                print(f"Thread {threading.current_thread().name}: Login successful")
-                print(f"Thread {threading.current_thread().name}: Session cookies: {thread_local.session.cookies.get_dict()}")
-            else:
-                print(f"Thread {threading.current_thread().name}: Login failed: Did not redirect to home page")
-                print(f"Home page response: {home_response.text}")
-        else:
-            print(f"Thread {threading.current_thread().name}: Login failed: Status {login_response.status_code} - {login_response.text}")
-    return thread_local.session
+TRANSFER_SUCCESS = Counter('transfer_success_total', 'Total successful transfers')
+TRANSFER_FAILED = Counter('transfer_failed_total', 'Total failed transfers')
+TRANSFER_LATENCY = Histogram('transfer_latency_seconds', 'Transfer latency in seconds', buckets=[0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 300])
 
-# Ensure the session is authenticated
-def ensure_authenticated():
-    """
-    Ensures the session is authenticated by checking access to a protected endpoint.
-    Uses a thread-local session to avoid race conditions.
-    Returns True if authenticated, False otherwise.
-    """
-    session = get_session()
-    # Check if we're already authenticated by accessing a protected endpoint
-    response = session.get(LIST_ENDPOINT, allow_redirects=False)
-    if response.status_code == 200 and "Test Bank - Account List" in response.text:
-        print(f"Thread {threading.current_thread().name}: Session is authenticated")
-        print(f"Thread {threading.current_thread().name}: Session cookies: {session.cookies.get_dict()}")
-        return True
-    
-    # If not authenticated, attempt to log in again
-    print(f"Thread {threading.current_thread().name}: Session not authenticated, attempting to log in...")
-    login_response = session.post(LOGIN_URL, data=LOGIN_DATA, allow_redirects=False)
-    if login_response.status_code == 302:
-        # Follow the redirect to the home page
-        home_response = session.get(BASE_URL)
-        if home_response.status_code == 200 and "Test Bank" in home_response.text and "Check Balance" in home_response.text:
-            print(f"Thread {threading.current_thread().name}: Login successful")
-            print(f"Thread {threading.current_thread().name}: Session cookies: {session.cookies.get_dict()}")
-            return True
-        else:
-            print(f"Thread {threading.current_thread().name}: Login failed: Did not redirect to home page")
-            print(f"Home page response: {home_response.text}")
-            return False
-    print(f"Thread {threading.current_thread().name}: Login failed: Status {login_response.status_code} - {login_response.text}")
-    return False
-
-# Fetch valid account numbers from /list
 def get_valid_accounts():
-    """
-    Fetches a list of valid account numbers by querying the /list endpoint.
-    Requires logging in first, as /list is a protected route.
-    Returns a list of account numbers as strings.
-    """
-    # Use a single session for this initial request
-    session = requests.Session()
-    print("Fetching valid accounts from /list...")
-    login_response = session.post(LOGIN_URL, data=LOGIN_DATA, allow_redirects=False)
-    if login_response.status_code != 302:
-        print(f"Initial login failed: Status {login_response.status_code} - {login_response.text}")
-        return []
-    
-    # Follow the redirect to the home page
-    home_response = session.get(BASE_URL)
-    if home_response.status_code != 200 or "Test Bank" not in home_response.text:
-        print(f"Failed to access home page after login: {home_response.text}")
-        return []
-    
-    # Fetch the /list page
-    response = session.get(LIST_ENDPOINT, allow_redirects=False)
-    if response.status_code != 200:
-        print(f"Failed to fetch account list: Status {response.status_code} - {response.text}")
-        return []
-    
-    # Parse the HTML to extract account numbers
-    soup = BeautifulSoup(response.text, 'html.parser')
-    accounts = []
-    table = soup.find('table')
-    if table:
-        rows = table.find_all('tr')[1:]  # Skip header row
-        for row in rows:
-            cols = row.find_all('td')
-            if cols:
-                account_number = cols[0].text.strip()  # First column is account number
-                if account_number.isdigit():
-                    accounts.append(account_number)
-    print(f"Fetched {len(accounts)} valid accounts")
-    return accounts
+    global VALID_ACCOUNTS, SESSION
+    with ACCOUNTS_LOCK:
+        if VALID_ACCOUNTS is None:
+            print("Fetching valid accounts...")
+            SESSION = requests.Session()
+            login_data = {"username": "testuser", "password": "password123"}
+            response = SESSION.post(f"{BASE_URL}/login", json=login_data, headers={"Content-Type": "application/json"})
+            response.raise_for_status()
+            token = response.json()['access_token']
+            HEADERS['Authorization'] = f"Bearer {token}"
+            response = SESSION.get(f"{BASE_URL}/list", headers=HEADERS)
+            response.raise_for_status()
+            accounts = response.json()
+            if not accounts:
+                raise Exception("No valid accounts found")
+            VALID_ACCOUNTS = [acc for acc in accounts if acc['balance'] > 50]
+            print(f"Loaded {len(VALID_ACCOUNTS)} valid accounts")
+    return VALID_ACCOUNTS
 
-# Generate random account pairs from valid accounts
-def get_random_account_pair(valid_accounts):
-    """
-    Selects two different random account numbers from the list of valid accounts.
-    Args:
-        valid_accounts (list): List of valid account numbers.
-    Returns:
-        tuple: (from_account, to_account) as strings.
-    """
-    if len(valid_accounts) < 2:
-        raise ValueError("Not enough valid accounts to test!")
-    from_account = random.choice(valid_accounts)
-    to_account = random.choice(valid_accounts)
-    while to_account == from_account:  # Ensure different accounts
-        to_account = random.choice(valid_accounts)
-    return from_account, to_account
-
-# Check the status of a transfer job
-def check_transfer_status(job_id):
-    """
-    Polls the /transfer_status/<job_id> endpoint until the job is finished.
-    Args:
-        job_id (str): The ID of the RQ job.
-    Returns:
-        tuple: (success, message) where success is a boolean indicating if the transfer succeeded,
-               and message is the result message from the job.
-    """
-    session = get_session()
-    status_url = f"{STATUS_ENDPOINT}/{job_id}"
-    while True:
-        # Ensure we're authenticated before making the request
-        if not ensure_authenticated():
-            return False, "Failed to authenticate for status check"
-        
-        response = session.get(status_url, allow_redirects=False)
-        if response.status_code == 202:  # Job is still processing
-            time.sleep(0.05)  # Wait before polling again
-            continue
-        elif response.status_code != 200:
-            return False, f"Failed to check status: {response.text} (Status: {response.status_code})"
-        
-        status_data = response.json()
-        status = status_data.get("status")
-        
-        if status == "completed":
-            result = status_data.get("result", {})
-            if result.get("status") == "success":
-                return True, result.get("message", "Transfer completed")
-            else:
-                return False, result.get("message", "Transfer failed")
-        elif status == "failed":
-            return False, status_data.get("message", "Job failed")
-        elif status == "error":
-            return False, status_data.get("message", "Invalid job ID")
-        else:
-            time.sleep(0.05)  # Wait before polling again
-
-# Single transfer request
-def make_transfer(valid_accounts, large_amounts_counter):
-    """
-    Makes a single transfer request using two random valid accounts and waits for the job to complete.
-    Args:
-        valid_accounts (list): List of valid account numbers.
-        large_amounts_counter (list): A list to track the number of transfers >£1000 (used for analysis).
-    Returns:
-        tuple: (latency, success, message, amount) where latency is the request time in seconds,
-               success is a boolean indicating if the transfer was successful,
-               message is the result message, and amount is the transfer amount.
-    """
-    from_account, to_account = get_random_account_pair(valid_accounts)
-    amount = random.uniform(50.0, 2000.0)  # £50 to £2000
-    if amount > 1000:
-        large_amounts_counter[0] += 1  # Increment counter for amounts >£1000
-    payload = {
-        "from_account": str(from_account),
-        "to_account": str(to_account),
-        "amount": str(amount)
-    }
-    try:
-        # Ensure we're authenticated before making the request
-        if not ensure_authenticated():
-            return 0, False, "Failed to authenticate for transfer request", amount
-        
-        session = get_session()
-        start_time = time.time()
-        response = session.post(TRANSFER_ENDPOINT, data=payload, allow_redirects=False)
-        latency = time.time() - start_time
-        
-        if response.status_code != 200:
-            print(f"Failed to enqueue transfer: {response.text} (Status: {response.status_code})")
-            return latency, False, response.text, amount
-        
-        # Extract job ID from the response
-        soup = BeautifulSoup(response.text, 'html.parser')
-        success_message = soup.find('p', class_='success')
-        if not success_message:
-            print(f"Failed to enqueue transfer: {response.text}")
-            return latency, False, "Failed to enqueue transfer", amount
-        
-        # Extract job ID (e.g., "Job ID: <job_id>")
-        job_id_text = success_message.text
-        job_id = job_id_text.split("Job ID: ")[-1].split(")")[0].strip()
-        
-        # Wait for the job to complete and check its status
-        success, message = check_transfer_status(job_id)
-        if success:
-            print(f"Success: Transfer £{amount:.2f} from {from_account} to {to_account} in {latency:.3f}s - {message}")
-        else:
-            print(f"Failed transfer: £{amount:.2f} from {from_account} to {to_account} - {message}")
-        return latency, success, message, amount
-    
-    except Exception as e:
-        print(f"Error: {e}")
-        return 0, False, str(e), amount
-
-# Main load test
-def run_load_test():
-    """
-    Runs the load test by simulating NUM_REQUESTS transfers using MAX_THREADS concurrent threads.
-    Prints the results, including total time, success rate, throughput, average latency,
-    and a breakdown of failure reasons.
-    """
-    # Fetch valid accounts
-    valid_accounts = get_valid_accounts()
-    if not valid_accounts:
-        print("No valid accounts found! Aborting test.")
-        return
-    
-    print(f"Starting load test: {NUM_REQUESTS} transfers with {MAX_THREADS} threads...")
+def make_transfer(from_account=None, to_account=None, amount=None):
+    accounts = get_valid_accounts()
+    if not accounts:
+        raise Exception("No valid accounts available")
+    from_account = from_account or random.choice(accounts)['account_number']
+    to_account = to_account or random.choice([a for a in accounts if a['account_number'] != from_account])['account_number']
+    amount = amount or random.uniform(TRANSFER_AMOUNT_MIN, TRANSFER_AMOUNT_MAX)
+    job_data = {'from_account': from_account, 'to_account': to_account, 'amount': amount}
     start_time = time.time()
-    
-    latencies = []
-    successes = 0
-    messages = []
-    amounts = []
-    large_amounts_counter = [0]  # Counter for transfers >£1000 (mutable list for thread safety)
-    
-    with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
-        results = executor.map(lambda _: make_transfer(valid_accounts, large_amounts_counter), range(NUM_REQUESTS))
-    
-    for latency, success, message, amount in results:
-        latencies.append(latency)
-        messages.append(message)
-        amounts.append(amount)
-        if success:
-            successes += 1
-    
-    total_time = time.time() - start_time
-    reqs_per_sec = NUM_REQUESTS / total_time if total_time > 0 else 0  # Use total requests, not successes
-    avg_latency = sum(latencies) / len(latencies) if latencies else 0
-    
-    # Analyze failure reasons
-    fraud_check_failures = sum(1 for msg in messages if "rejected by fraud check" in msg)
-    insufficient_funds_failures = sum(1 for msg in messages if "Insufficient funds" in msg)
-    other_failures = (NUM_REQUESTS - successes) - (fraud_check_failures + insufficient_funds_failures)
-    
-    print(f"\n--- Load Test Results ---")
+    print(f"Making transfer: from={from_account}, to={to_account}, amount={amount}")
+    for attempt in range(3):
+        try:
+            response = SESSION.post(f"{BASE_URL}/transfer", json=job_data, headers=HEADERS)
+            response.raise_for_status()
+            job_id = response.json()['transfer_id']
+            return job_id, start_time, amount
+        except requests.exceptions.RequestException as e:
+            if attempt < 2:
+                print(f"Retry {attempt+1}/3 for transfer: {str(e)}")
+                time.sleep(1)
+                continue
+            raise Exception(f"Failed after 3 attempts: {str(e)}")
+
+def check_transfer_status(job_id, start_time):
+    enqueue_time = time.time() - start_time
+    timeout = start_time + STATUS_TIMEOUT
+    while time.time() < timeout:
+        for attempt in range(5):
+            try:
+                response = SESSION.get(f"{BASE_URL}/transfer_status/{job_id}", headers=HEADERS)
+                print(f"Checking status for {job_id}: HTTP {response.status_code}")
+                if response.status_code == 200:
+                    result = response.json()
+                    print(f"Status response for {job_id}: {result}")
+                    if not isinstance(result, dict):
+                        raise ValueError(f"Expected dict, got {type(result)}: {result}")
+                    total_time = time.time() - start_time
+                    status = result['status']
+                    print(f"Status for {job_id}: {status}")
+                    return status, result.get('result', {}), enqueue_time, total_time
+                elif response.status_code == 202:
+                    print(f"Status for {job_id}: still processing")
+                    time.sleep(0.2)
+                    break
+                else:
+                    raise Exception(f"Unexpected status code: {response.status_code}")
+            except requests.exceptions.RequestException as e:
+                if attempt < 4:
+                    print(f"Retry {attempt+1}/5 for status {job_id}: {str(e)}")
+                    time.sleep(0.5)
+                    continue
+                raise Exception(f"Failed after 5 attempts: {str(e)}")
+    print(f"Timeout for {job_id} after {STATUS_TIMEOUT}s")
+    return "timeout", {"message": "Transfer timed out"}, enqueue_time, time.time() - start_time
+
+def run_transfer(transfer_id):
+    try:
+        job_id, start_time, amount = make_transfer()
+        print(f"Transfer {transfer_id}: Enqueued job_id={job_id}")
+        status, result, enqueue_time, total_time = check_transfer_status(job_id, start_time)
+        print(f"Transfer {transfer_id}: Status={status}, Result={result}")
+        if status == "completed":
+            TRANSFER_SUCCESS.inc()
+            TRANSFER_LATENCY.observe(total_time)
+            return True, amount, enqueue_time, total_time, None
+        else:
+            TRANSFER_FAILED.inc()
+            reason = result.get('message', status) if isinstance(result, dict) else str(result)
+            return False, amount, enqueue_time, total_time, reason
+    except Exception as e:
+        TRANSFER_FAILED.inc()
+        print(f"Transfer {transfer_id} failed: {str(e)}")
+        return False, None, None, None, str(e)
+
+def main():
+    start_http_server(8000)
+    print("Starting load test...")
+    start_time = time.time()
+
+    get_valid_accounts()
+
+    results = []
+    with ThreadPoolExecutor(max_workers=CONCURRENT_THREADS) as executor:
+        futures = [executor.submit(run_transfer, i) for i in range(NUM_TRANSFERS)]
+        results = [future.result() for future in futures]
+
+    end_time = time.time()
+    total_time = end_time - start_time
+
+    successful_transfers = sum(1 for result in results if result[0])
+    failed_transfers = NUM_TRANSFERS - successful_transfers
+    requests_per_second = NUM_TRANSFERS / total_time
+    successful_enqueues = [result[2] for result in results if result[0] and result[2] is not None]
+    successful_totals = [result[3] for result in results if result[0] and result[3] is not None]
+    avg_enqueue_latency = sum(successful_enqueues) / len(successful_enqueues) if successful_enqueues else 0
+    avg_total_latency = sum(successful_totals) / len(successful_totals) if successful_totals else 0
+    transfers_above_1000 = sum(1 for result in results if result[1] is not None and result[1] > 1000)
+    for result in results:
+        if not result[0]:
+            print(f"Failed transfer reason: {result[4]}")
+    fraud_check_failures = sum(1 for result in results if not result[0] and result[4] and "rejected by fraud check" in result[4])
+    insufficient_funds_failures = sum(1 for result in results if not result[0] and result[4] and "Insufficient funds" in result[4])
+    timeout_failures = sum(1 for result in results if not result[0] and result[4] and "Transfer timed out" in result[4])
+    connection_failures = sum(1 for result in results if not result[0] and result[4] and "Connection" in result[4])
+    other_failures = failed_transfers - fraud_check_failures - insufficient_funds_failures - timeout_failures - connection_failures
+
+    print("--- Load Test Results ---")
     print(f"Completed in {total_time:.2f} seconds")
-    print(f"Successful transfers: {successes}/{NUM_REQUESTS}")
-    print(f"Requests per second: {reqs_per_sec:.2f}")
-    print(f"Average latency: {avg_latency:.3f} seconds")
-    print(f"\n--- Failure Breakdown ---")
-    print(f"Transfers with amount >£1000: {large_amounts_counter[0]}")
+    print(f"Successful transfers: {successful_transfers}/{NUM_TRANSFERS}")
+    print(f"Requests per second: {requests_per_second:.2f}")
+    print(f"Average enqueue latency (successful transfers): {avg_enqueue_latency:.3f} seconds")
+    print(f"Average total latency (successful transfers): {avg_total_latency:.3f} seconds")
+    print("\n--- Failure Breakdown ---")
+    print(f"Transfers with amount >£1000: {transfers_above_1000}")
     print(f"Fraud check failures: {fraud_check_failures}")
     print(f"Insufficient funds failures: {insufficient_funds_failures}")
+    print(f"Timeout failures: {timeout_failures}")
+    print(f"Connection failures: {connection_failures}")
     print(f"Other failures: {other_failures}")
+    print("\n--- Prometheus Metrics ---")
+    print(f"Total transfers processed (success): {TRANSFER_SUCCESS._value.get()}")
+    print(f"Total transfers processed (failed): {TRANSFER_FAILED._value.get()}")
 
 if __name__ == "__main__":
-    run_load_test()
+    main()

@@ -148,7 +148,8 @@ async def startup():
 @app.on_event("shutdown")
 async def shutdown():
     try:
-        await app.state.db_pool.close()
+        await app.state.db_pool.acquire() as conn:
+            await conn.close()
         logger.info("Database pool closed")
     except Exception as e:
         logger.error(f"Error closing database pool: {str(e)}")
@@ -158,7 +159,7 @@ async def shutdown():
     except Exception as e:
         logger.error(f"Error closing Redis connection: {str(e)}")
 
-# HTML UI for root
+# HTML UI for root with search box
 @app.get("/", response_class=HTMLResponse)
 async def root():
     html_content = """
@@ -172,6 +173,10 @@ async def root():
             h1 { color: #333; }
             p { font-size: 18px; }
             .container { max-width: 800px; margin: auto; }
+            form { display: flex; flex-direction: column; gap: 10px; max-width: 300px; }
+            input { padding: 8px; font-size: 16px; }
+            button { padding: 10px; background-color: #0066cc; color: white; border: none; cursor: pointer; }
+            button:hover { background-color: #005bb5; }
             a { color: #0066cc; text-decoration: none; }
             a:hover { text-decoration: underline; }
         </style>
@@ -179,13 +184,12 @@ async def root():
     <body>
         <div class="container">
             <h1>Welcome to Test Bank</h1>
-            <p>Your friendly banking app is back online! Log in to access your account details.</p>
+            <p>Your friendly banking app is back online! Search for an account or log in to access more features.</p>
+            <form action="/balance" method="get">
+                <input type="text" name="account_number" placeholder="Enter account number" required>
+                <button type="submit">Check Balance</button>
+            </form>
             <p><a href="/login">Click here to log in</a></p>
-            <p>API endpoints available after login:</p>
-            <ul>
-                <li><a href="/api/balance/614437">Check Balance (614437)</a></li>
-                <li><a href="/api/history/614437">View History (614437)</a></li>
-            </ul>
         </div>
     </body>
     </html>
@@ -297,6 +301,111 @@ async def login(username: str = Form(...), password: str = Form(...)):
     </html>
     """
     return HTMLResponse(content=html_content, status_code=401)
+
+# Balance UI with search redirect
+@app.get("/balance", response_class=HTMLResponse)
+async def balance_redirect(account_number: str):
+    return RedirectResponse(url=f"/balance/{account_number}")
+
+@app.get("/balance/{account_number}", response_class=HTMLResponse)
+async def balance_page(account_number: str, current_user: str = Depends(get_current_user)):
+    try:
+        async with app.state.db_pool.acquire() as conn:
+            account = await conn.fetchrow(
+                "SELECT account_number, balance, first_name, last_name, dob, address_line_one, address_line_two, town, city, post_code FROM accounts WHERE account_number = $1",
+                account_number
+            )
+            if not account:
+                logger.warning(f"Account {account_number} not found")
+                html_content = """
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="UTF-8">
+                    <title>Account Not Found - Test Bank</title>
+                    <style>
+                        body { font-family: Arial, sans-serif; margin: 40px; }
+                        h1 { color: #333; }
+                        .container { max-width: 800px; margin: auto; }
+                        a { color: #0066cc; text-decoration: none; }
+                        a:hover { text-decoration: underline; }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <h1>Account Not Found</h1>
+                        <p>The account number you entered was not found.</p>
+                        <p><a href="/">Back to Search</a></p>
+                    </div>
+                </body>
+                </html>
+                """
+                return HTMLResponse(content=html_content, status_code=404)
+
+        html_content = f"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <title>Account Details - Test Bank</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 40px; }}
+                h1 {{ color: #333; }}
+                .container {{ max-width: 800px; margin: auto; }}
+                table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
+                th, td {{ padding: 10px; border: 1px solid #ddd; text-align: left; }}
+                th {{ background-color: #f2f2f2; }}
+                a {{ color: #0066cc; text-decoration: none; }}
+                a:hover {{ text-decoration: underline; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Account Details</h1>
+                <table>
+                    <tr><th>Account Number</th><td>{account['account_number']}</td></tr>
+                    <tr><th>Balance</th><td>£{account['balance']:.2f}</td></tr>
+                    <tr><th>First Name</th><td>{account['first_name'] or 'N/A'}</td></tr>
+                    <tr><th>Last Name</th><td>{account['last_name'] or 'N/A'}</td></tr>
+                    <tr><th>Date of Birth</th><td>{account['dob'] or 'N/A'}</td></tr>
+                    <tr><th>Address Line 1</th><td>{account['address_line_one'] or 'N/A'}</td></tr>
+                    <tr><th>Address Line 2</th><td>{account['address_line_two'] or 'N/A'}</td></tr>
+                    <tr><th>Town</th><td>{account['town'] or 'N/A'}</td></tr>
+                    <tr><th>City</th><td>{account['city'] or 'N/A'}</td></tr>
+                    <tr><th>Postcode</th><td>{account['post_code'] or 'N/A'}</td></tr>
+                </table>
+                <p><a href="/">Back to Search</a></p>
+            </div>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html_content)
+    except Exception as e:
+        logger.error(f"Error fetching balance for {account_number}: {str(e)}")
+        html_content = """
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <title>Error - Test Bank</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 40px; }
+                h1 { color: #333; }
+                .container { max-width: 800px; margin: auto; }
+                a { color: #0066cc; text-decoration: none; }
+                a:hover { text-decoration: underline; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Error</h1>
+                <p>Failed to fetch account details. Please try again later.</p>
+                <p><a href="/">Back to Search</a></p>
+            </div>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html_content, status_code=500)
 
 # Other Endpoints
 @app.post("/transfer")
@@ -447,7 +556,8 @@ async def withdraw(request: WithdrawRequest, current_user: str = Depends(get_cur
         logger.info(f"Withdrew £{request.amount:.2f} from account {request.account_number}")
         return {"message": f"Withdrew £{request.amount:.2f} from account {request.account_number}"}
     except Exception as e:
-        logger.error(f"Error withdrawing from account {request.account_number}: {str(e)}")
+        logger.error Wrote 2,048 bytes to /opt/banking-app/app.py
+(f"Error withdrawing from account {request.account_number}: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to withdraw")
 
 @app.post("/register")

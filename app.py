@@ -39,8 +39,22 @@ class TransferRequest(BaseModel):
     def validate(cls, v):
         if v.amount <= 0:
             raise ValueError("Amount must be positive")
-        if len(v.from_account) != 6 or len(v.to_account) != 6:
-            raise ValueError("Account numbers must be 6 characters")
+        if len(v.to_account) != 6:
+            raise ValueError("To account number must be 6 characters")
+        if len(v.from_account) > 50:
+            raise ValueError("From account identifier must not exceed 50 characters")
+        return v
+
+class DepositRequest(BaseModel):
+    account_number: str
+    amount: float
+
+    @classmethod
+    def validate(cls, v):
+        if v.amount <= 0:
+            raise ValueError("Amount must be positive")
+        if len(v.account_number) != 6:
+            raise ValueError("Account number must be 6 characters")
         return v
 
 class LoginRequest(BaseModel):
@@ -540,8 +554,8 @@ async def deposit(account_number: str = Form(...), amount: float = Form(...), us
                 result = {"message": f"Deposited £{amount:.2f} to account {account_number}"}
                 result_json = json.dumps(result)
                 await conn.execute(
-                    "INSERT INTO transfer_jobs (transfer_id, from_account, to_account, amount, status, result, timestamp) VALUES ($1, $2, $3, $4, 'deposit', $5, CURRENT_TIMESTAMP)",
-                    transfer_id, None, account_number, amount, "deposit", result_json
+                    "INSERT INTO transfer_jobs (transfer_id, from_account, to_account, amount, status, result, timestamp) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)",
+                    transfer_id, "EXTERNAL_DEPOSIT", account_number, amount, "deposit", result_json
                 )
         logger.info(f"Deposited £{amount:.2f} to account {account_number}")
         return RedirectResponse(url=f"/dashboard?username={username}&message=Successfully deposited £{amount:.2f} to account {account_number}", status_code=303)
@@ -655,12 +669,12 @@ async def api_balance(account_number: str, username: str = ""):
         logger.error(f"Error fetching balance for {account_number}: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to fetch balance")
 
-@app.get("/api/history/{account_number}")
-async def api_history(account_number: str, username: str = ""):
-    logger.info(f"API-history: Received username={username}")
+@app.get("/history/{account_number}", response_class=HTMLResponse)
+async def history_page(account_number: str, username: str):
+    logger.info(f"History: Received username={username}")
     if not username:
-        logger.warning("API-history: No username provided")
-        raise HTTPException(status_code=401, detail="Not authenticated")
+        logger.warning("History: No username provided")
+        return RedirectResponse(url="/login", status_code=303)
 
     try:
         async with app.state.db_pool.acquire() as conn:
@@ -668,50 +682,54 @@ async def api_history(account_number: str, username: str = ""):
                 "SELECT transfer_id, from_account, to_account, amount, status, result FROM transfer_jobs WHERE from_account = $1 OR to_account = $1",
                 account_number
             )
-        return [
-            {
-                "transfer_id": t['transfer_id'],
-                "from_account": t['from_account'],
-                "to_account": t['to_account'],
-                "amount": float(t['amount']),
-                "status": t['status'],
-                "result": t['result'] if t['result'] else None
-            } for t in transfers
-        ]
+            if not transfers:
+                content = f"""
+                <h1>Transfer History for {account_number}</h1>
+                <p>No transfers found for this account.</p>
+                <a href="/view-history?username={username}" class="button">Back to View History</a>
+                """
+                return HTMLResponse(content=render_base_html("Transfer History", content, username, "/view-history"))
+
+        table_rows = ""
+        for t in transfers:
+            # Parse the result JSON string into a dictionary
+            result = json.loads(t['result']) if t['result'] else {}
+            result_message = result.get('message', 'N/A') if isinstance(result, dict) else 'N/A'
+            table_rows += f"""
+            <tr>
+                <td>{t['transfer_id']}</td>
+                <td>{t['from_account']}</td>
+                <td>{t['to_account']}</td>
+                <td>£{t['amount']:.2f}</td>
+                <td>{t['status']}</td>
+                <td>{result_message}</td>
+            </tr>
+            """
+
+        content = f"""
+        <h1>Transfer History for {account_number}</h1>
+        <table>
+            <tr>
+                <th>Transfer ID</th>
+                <th>From Account</th>
+                <th>To Account</th>
+                <th>Amount</th>
+                <th>Status</th>
+                <th>Result</th>
+            </tr>
+            {table_rows}
+        </table>
+        <a href="/view-history?username={username}" class="button">Back to View History</a>
+        """
+        return HTMLResponse(content=render_base_html("Transfer History", content, username, "/history"))
     except Exception as e:
         logger.error(f"Error fetching history for {account_number}: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to fetch history")
-
-@app.post("/withdraw")
-async def withdraw(request: WithdrawRequest, username: str = ""):
-    logger.info(f"Withdraw: Received username={username}")
-    if not username:
-        logger.warning("Withdraw: No username provided")
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    try:
-        WithdrawRequest.validate(request)
-    except ValueError as e:
-        logger.warning(f"Invalid withdraw request: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
-
-    try:
-        async with app.state.db_pool.acquire() as conn:
-            async with conn.transaction():
-                account = await conn.fetchrow("SELECT balance FROM accounts WHERE account_number = $1 FOR UPDATE", request.account_number)
-                if not account:
-                    logger.warning(f"Account {request.account_number} not found")
-                    raise HTTPException(status_code=404, detail="Account not found")
-                balance = account['balance']
-                if balance < request.amount:
-                    logger.warning(f"Insufficient funds in account {request.account_number}: balance £{balance:.2f}, requested £{request.amount:.2f}")
-                    raise HTTPException(status_code=400, detail="Insufficient funds")
-                await conn.execute("UPDATE accounts SET balance = balance - $1 WHERE account_number = $2", request.amount, request.account_number)
-        logger.info(f"Withdrew £{request.amount:.2f} from account {request.account_number}")
-        return {"message": f"Withdrew £{request.amount:.2f} from account {request.account_number}"}
-    except Exception as e:
-        logger.error(f"Error withdrawing from account {request.account_number}: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to withdraw")
+        content = """
+        <h1>Error</h1>
+        <p>Failed to fetch transfer history. Please try again later.</p>
+        <a href="/view-history?username={username}" class="button">Back to View History</a>
+        """.format(username=username)
+        return HTMLResponse(content=render_base_html("Error", content, username, "/view-history"), status_code=500)
 
 @app.post("/register")
 async def register(request: Request, username: str = Form(None), password: str = Form(None)):
